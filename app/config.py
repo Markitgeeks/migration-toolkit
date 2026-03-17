@@ -1,9 +1,17 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+IS_VERCEL = bool(os.environ.get("VERCEL"))
 
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "sqlite+aiosqlite:///./migration.db"
-    EXPORT_DIR: str = "./exports"
+    DATABASE_URL: str = (
+        "sqlite+aiosqlite:////tmp/migration.db"
+        if IS_VERCEL
+        else "sqlite+aiosqlite:///./migration.db"
+    )
+    EXPORT_DIR: str = "/tmp/exports" if IS_VERCEL else "./exports"
     MAX_CONCURRENT_REQUESTS: int = 5
     CRAWL_DELAY: float = 1.0
     USER_AGENT: str = (
