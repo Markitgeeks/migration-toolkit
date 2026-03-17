@@ -21,6 +21,13 @@ from .base import BaseConnector
 
 logger = logging.getLogger(__name__)
 
+# Use lxml if available, fall back to html.parser
+try:
+    import lxml  # noqa: F401
+    HTML_PARSER = "lxml"
+except ImportError:
+    HTML_PARSER = "html.parser"
+
 DEFAULT_MAX_PAGES = 1000
 DEFAULT_CRAWL_DELAY = 0.5  # seconds between requests
 REQUEST_TIMEOUT = 20.0
@@ -203,7 +210,7 @@ class WebCrawlerConnector(BaseConnector):
                     )
                     continue
 
-                soup = BeautifulSoup(html, "lxml")
+                soup = BeautifulSoup(html, HTML_PARSER)
                 page_data = self._extract_page_metadata(soup, url)
                 page_data["status_code"] = status_code
                 page_data["redirect_to"] = redirect_to
@@ -251,7 +258,7 @@ class WebCrawlerConnector(BaseConnector):
             logger.debug("Could not fetch sitemap at %s: %s", url, exc)
             return urls
 
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, HTML_PARSER)
 
         # Sitemap index — recurse into child sitemaps
         for sitemap_tag in soup.find_all("sitemap"):
