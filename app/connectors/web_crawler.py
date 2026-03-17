@@ -136,7 +136,7 @@ class WebCrawlerConnector(BaseConnector):
     # ------------------------------------------------------------------
 
     async def _crawl(self) -> None:
-        """Run the full crawl pipeline."""
+        """Run the full crawl pipeline using httpx (serverless-compatible)."""
         logger.info("Starting crawl of %s (max %d pages)", self.store_url, self.max_pages)
 
         # Discover URLs from sitemap first
@@ -147,21 +147,20 @@ class WebCrawlerConnector(BaseConnector):
 
         logger.info("Sitemap discovery found %d URLs", len(sitemap_urls))
 
-        browser = None
-        playwright_mod = None
-        try:
-            from playwright.async_api import async_playwright
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
 
-            playwright_mod = await async_playwright().start()
-            browser = await playwright_mod.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (compatible; MigrationToolkit/1.0; "
-                    "+https://github.com/migration-toolkit)"
-                ),
-                viewport={"width": 1280, "height": 720},
-            )
-
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(REQUEST_TIMEOUT),
+            follow_redirects=True,
+            headers=headers,
+        ) as client:
             while queue and len(self._visited) < self.max_pages:
                 url = queue.pop(0)
                 url = self._normalize_url(url)
@@ -177,27 +176,31 @@ class WebCrawlerConnector(BaseConnector):
                 self._report_progress(len(self._visited), len(queue) + len(self._visited), url)
 
                 try:
-                    page = await context.new_page()
-                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    status_code = resp.status if resp else 0
-                    final_url = page.url
+                    resp = await client.get(url)
+                    status_code = resp.status_code
+                    final_url = str(resp.url)
 
                     # Detect redirect
                     redirect_to = None
                     if self._normalize_url(final_url) != url:
                         redirect_to = final_url
 
-                    html = await page.content()
-                    await page.close()
+                    # Skip non-HTML responses
+                    content_type = resp.headers.get("content-type", "")
+                    if "text/html" not in content_type:
+                        self._url_records.append({
+                            "url": url, "status_code": status_code,
+                            "page_type": "other", "redirect_to": redirect_to,
+                            "content_type": content_type,
+                        })
+                        continue
+
+                    html = resp.text
                 except Exception as exc:
                     logger.warning("Failed to load %s: %s", url, exc)
                     self._url_records.append(
                         {"url": url, "status_code": 0, "page_type": "error", "redirect_to": None}
                     )
-                    try:
-                        await page.close()
-                    except Exception:
-                        pass
                     continue
 
                 soup = BeautifulSoup(html, "lxml")
@@ -220,17 +223,6 @@ class WebCrawlerConnector(BaseConnector):
 
                 if self.crawl_delay > 0:
                     await asyncio.sleep(self.crawl_delay)
-
-        except ImportError:
-            logger.error(
-                "Playwright is not installed. Install it with: pip install playwright && playwright install chromium"
-            )
-            raise
-        finally:
-            if browser:
-                await browser.close()
-            if playwright_mod:
-                await playwright_mod.stop()
 
         logger.info(
             "Crawl complete: %d pages visited, %d products, %d collections, %d pages, %d blogs",
