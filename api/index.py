@@ -1,6 +1,5 @@
-"""Vercel serverless entry point — exposes the FastAPI app as a handler."""
+"""Vercel serverless entry point."""
+from app.main import app
 
-from app.main import app  # noqa: F401
-
-# Vercel looks for an `app` variable in this module.
-# The import above is all that's needed.
+# Vercel's @vercel/python runtime detects this ASGI app automatically.
+handler = app
